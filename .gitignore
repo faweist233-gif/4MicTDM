@@ -1,0 +1,13 @@
+# ESP-IDF build
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+*.bin
+*.elf
+*.map
+
+# server output
+server/recordings/
+__pycache__/
+*.pyc

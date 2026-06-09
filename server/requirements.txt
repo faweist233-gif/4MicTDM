@@ -1,0 +1,4 @@
+# recv_server.py 仅用 Python 标准库 (socket/struct/wave), 无需额外依赖。
+# 如需实时波形/频谱可视化, 再装下列可选包:
+# numpy
+# matplotlib
