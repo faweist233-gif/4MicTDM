@@ -107,14 +107,12 @@ esp_err_t pcm1865_init(void)
     //    若 ESP32 端读到的通道整体错位, 在此调整 (单位 BCK)。
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_TDM_TX_OFFSET, 0x01), TAG, "tdm_off");
 
-    // 8) 时钟: 从机 + PLL 以 BCK 为参考 + ADC/系统时钟取自 PLL
-    //    (PCM186x 上电默认即"从机 + 自动时钟检测", 多数情况留默认也能锁;
-    //     这里显式写入以确保 BCK-PLL 路径生效)
-    ESP_RETURN_ON_ERROR(
-        reg_write(PCM186X_CLK_CTRL,
-                  CLK_CTRL_SCK_XI_BCK | CLK_CTRL_SCK_SRC_PLL | CLK_CTRL_ADC_SRC_PLL),
-        TAG, "clk_ctrl");
-    // 若自动时钟检测更稳, 可改为: reg_write(PCM186X_CLK_CTRL, 0x00);
+    // 8) 时钟: 从机 + 自动时钟检测 (0x00)。
+    //    PCM186x 上电默认即此模式, 自动从 BCK/LRCK 锁内部时钟, bring-up 最稳。
+    //    全 0 静音多半是手写 PLL 位域与本芯片不符导致 PLL 不锁; 先用自动检测验证通路。
+    //    若需强制 BCK-PLL 路径, 再改回:
+    //      CLK_CTRL_SCK_XI_BCK | CLK_CTRL_SCK_SRC_PLL | CLK_CTRL_ADC_SRC_PLL
+    ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x00), TAG, "clk_ctrl");
 
     // 9) 上电运行 (清 PWRDN/SLEEP/STBY)
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_POWER_CTRL, 0x00), TAG, "power");

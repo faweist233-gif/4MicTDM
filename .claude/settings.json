@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('recv_server.py',encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(xxd -l 64 rec_20260609_232628_16000Hz_4ch.wav)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
