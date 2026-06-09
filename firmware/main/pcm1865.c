@@ -27,8 +27,15 @@ static const char *TAG = "pcm1865";
 #define PCM186X_PCM_CFG           0x0b   // FMT(TDM/I2S) + 字长
 #define PCM186X_TDM_TX_SEL        0x0c
 #define PCM186X_TDM_TX_OFFSET     0x0d
-#define PCM186X_CLK_CTRL          0x20   // 主从 / PLL 源 / SCK 源
+#define PCM186X_CLK_CTRL          0x20   // 主从 / PLL 源 / SCK 源 / 时钟检测
+#define PCM186X_PLL_CTRL          0x28   // bit4=LOCK(只读) bit1=REF_SEL bit0=EN
 #define PCM186X_POWER_CTRL        0x70
+// ---- 只读状态寄存器 (bring-up 诊断) ----
+#define PCM186X_DEVICE_STATUS     0x72
+#define PCM186X_FSAMPLE_STATUS    0x73
+#define PCM186X_DIV_STATUS        0x74
+#define PCM186X_CLK_STATUS        0x75   // bit6 LRCKHLT,5 BCKHLT,4 SCKHLT,2 LRCKERR,1 BCKERR,0 SCKERR
+#define PCM186X_SUPPLY_STATUS     0x78   // bit2 DVDD,1 AVDD,0 LDO
 
 // ---- PCM_CFG 位 ----
 // RX_WLEN[7:6], TX_WLEN[3:2], FMT[1:0]; 16-bit=0b11, TDM=0b11
@@ -49,6 +56,36 @@ static esp_err_t reg_write(uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = { reg, val };
     return i2c_master_transmit(s_dev, buf, sizeof(buf), 1000);
+}
+
+static esp_err_t reg_read(uint8_t reg, uint8_t *val)
+{
+    return i2c_master_transmit_receive(s_dev, &reg, 1, val, 1, 1000);
+}
+
+// bring-up 诊断: 回读关键状态寄存器, 判断时钟/PLL/供电是否正常
+void pcm1865_dump_status(void)
+{
+    uint8_t clk_ctrl = 0, pll = 0, dev = 0, fs = 0, divs = 0, clk = 0, sup = 0;
+    reg_write(PCM186X_PAGE, 0x00);
+    reg_read(PCM186X_CLK_CTRL,      &clk_ctrl);
+    reg_read(PCM186X_PLL_CTRL,      &pll);
+    reg_read(PCM186X_DEVICE_STATUS, &dev);
+    reg_read(PCM186X_FSAMPLE_STATUS,&fs);
+    reg_read(PCM186X_DIV_STATUS,    &divs);
+    reg_read(PCM186X_CLK_STATUS,    &clk);
+    reg_read(PCM186X_SUPPLY_STATUS, &sup);
+
+    ESP_LOGI(TAG, "=== PCM1865 状态 ===");
+    ESP_LOGI(TAG, "CLK_CTRL(0x20)=0x%02X  PLL_CTRL(0x28)=0x%02X (LOCK=%d EN=%d REF_SEL=%d)",
+             clk_ctrl, pll, !!(pll & 0x10), !!(pll & 0x01), !!(pll & 0x02));
+    ESP_LOGI(TAG, "DEVICE_STATUS(0x72)=0x%02X  FSAMPLE(0x73)=0x%02X  DIV(0x74)=0x%02X",
+             dev, fs, divs);
+    ESP_LOGI(TAG, "CLK_STATUS(0x75)=0x%02X  LRCKHLT=%d BCKHLT=%d SCKHLT=%d | LRCKERR=%d BCKERR=%d SCKERR=%d",
+             clk, !!(clk&0x40), !!(clk&0x20), !!(clk&0x10), !!(clk&0x04), !!(clk&0x02), !!(clk&0x01));
+    ESP_LOGI(TAG, "SUPPLY(0x78)=0x%02X  DVDD=%d AVDD=%d LDO=%d",
+             sup, !!(sup&0x04), !!(sup&0x02), !!(sup&0x01));
+    ESP_LOGI(TAG, "判读: SCKHLT=1 => 无系统时钟(缺 MCLK 或 PLL 没锁); BCKHLT/LRCKHLT=1 => ESP32 没送 BCK/LRCK");
 }
 
 void pcm1865_scan(void)
@@ -107,12 +144,28 @@ esp_err_t pcm1865_init(void)
     //    若 ESP32 端读到的通道整体错位, 在此调整 (单位 BCK)。
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_TDM_TX_OFFSET, 0x01), TAG, "tdm_off");
 
-    // 8) 时钟: 从机 + 自动时钟检测 (0x00)。
-    //    PCM186x 上电默认即此模式, 自动从 BCK/LRCK 锁内部时钟, bring-up 最稳。
-    //    全 0 静音多半是手写 PLL 位域与本芯片不符导致 PLL 不锁; 先用自动检测验证通路。
-    //    若需强制 BCK-PLL 路径, 再改回:
-    //      CLK_CTRL_SCK_XI_BCK | CLK_CTRL_SCK_SRC_PLL | CLK_CTRL_ADC_SRC_PLL
-    ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x00), TAG, "clk_ctrl");
+    // 8) 时钟配置 —— 这是"全零静音"的关键
+#if USE_MCLK_OUTPUT
+    // Path A: ESP32 送 MCLK 到 SCK 脚 -> 从机 + 自动时钟检测 (CLKDET_EN=1),
+    //         系统/ADC/DSP 时钟全部取自 SCK 脚, 自动识别 SCK/fs 比率。最稳。
+    ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x01 /*CLKDET_EN*/), TAG, "clk_ctrl");
+#else
+    // Path B: 无 MCLK, 须用 PLL 以 BCK 为参考造系统时钟。
+    //   下列为骨架, P/R/J/D 与各分频需按 PCM186x 数据手册 PLL 章节填入并用逻辑分析仪验证,
+    //   否则 PLL 不锁仍是全零。bring-up 时建议先走 Path A。
+    //   参考: REF=BCK=64fs=1.024MHz@16k, 目标 SCK=256fs。
+    //   PLL_CTRL(0x28): bit1 REF_SEL=1 选 BCK 为参考, bit0 EN=1。
+    reg_write(0x28, 0x00);                       // 先关 PLL 再配
+    // reg_write(PCM186X_PLL_P_DIV/*0x29*/, P-1);
+    // reg_write(PCM186X_PLL_R_DIV/*0x2A*/, R);
+    // reg_write(PCM186X_PLL_J_DIV/*0x2B*/, J);
+    // reg_write(0x2C, D_LSB); reg_write(0x2D, D_MSB);
+    // reg_write(0x25 /*PLL_SCK_DIV*/, sck_div-1);
+    // reg_write(0x21 /*DSP1_CLK_DIV*/, ...); reg_write(0x22, ...); reg_write(0x23 /*ADC*/, ...);
+    reg_write(0x28, 0x03);                       // REF_SEL=BCK | EN
+    // CLK_CTRL: SCK_SRC_PLL(bit5) | ADC_SRC_PLL(bit3) | DSP_SRC_PLL(bit2,1) | CLKDET_EN(bit0)
+    ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x2F), TAG, "clk_ctrl");
+#endif
 
     // 9) 上电运行 (清 PWRDN/SLEEP/STBY)
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_POWER_CTRL, 0x00), TAG, "power");

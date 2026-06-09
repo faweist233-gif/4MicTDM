@@ -21,7 +21,14 @@
 #define I2S_BCK_GPIO     GPIO_NUM_2   // BCK  -> PCM1865 BCK
 #define I2S_WS_GPIO      GPIO_NUM_3   // LRCK -> PCM1865 LRCK
 #define I2S_DIN_GPIO     GPIO_NUM_1   // DOUT <- PCM1865 DOUT (TDM 单线 4 通道)
-// MCLK 不使用: PCM1865 从 BCK 用内部 PLL 派生系统时钟
+
+// ---- 时钟方案 (关键!) ----
+// 全零静音的根因: 无 MCLK 时 PCM1865 没有系统时钟, ADC 不工作, 数字输出恒 0。
+//   USE_MCLK_OUTPUT = 1 (推荐): ESP32 额外输出 256fs MCLK 到 PCM1865 SCK 脚,
+//       需多接 1 根线 (I2S_MCLK_GPIO -> PCM1865 SCK/XI), 配 CLK_CTRL=0x00 自动检测。
+//   USE_MCLK_OUTPUT = 0: 走 BCK-PLL (免线), 但需在 pcm1865.c 手填 PLL 寄存器, 难调。
+#define USE_MCLK_OUTPUT  1
+#define I2S_MCLK_GPIO    GPIO_NUM_10  // MCLK 输出 -> PCM1865 SCK/XI (仅 USE_MCLK_OUTPUT=1 时用)
 
 // ---- I2C 引脚 (ESP32-C3 = 主机) ----
 // 注意: GPIO8/9 是 strapping 脚, 见 docs/PLAN.md §1.1

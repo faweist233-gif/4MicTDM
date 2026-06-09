@@ -26,7 +26,11 @@ esp_err_t i2s_capture_init(void)
                         I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
                         I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3),
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,    // 不输出 MCLK
+#if USE_MCLK_OUTPUT
+            .mclk = I2S_MCLK_GPIO,      // 输出 MCLK 给 PCM1865 系统时钟
+#else
+            .mclk = I2S_GPIO_UNUSED,    // BCK-PLL: 不输出 MCLK
+#endif
             .bclk = I2S_BCK_GPIO,
             .ws   = I2S_WS_GPIO,
             .dout = I2S_GPIO_UNUSED,
@@ -38,6 +42,9 @@ esp_err_t i2s_capture_init(void)
             },
         },
     };
+#if USE_MCLK_OUTPUT
+    tdm_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;  // MCLK = 256*fs, PCM1865 标准比率
+#endif
     ESP_RETURN_ON_ERROR(i2s_channel_init_tdm_mode(s_rx, &tdm_cfg), TAG, "init_tdm");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx), TAG, "enable");
 

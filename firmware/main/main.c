@@ -68,6 +68,11 @@ void app_main(void)
     wifi_sta_connect_blocking();
     ESP_ERROR_CHECK(pcm1865_init());
     ESP_ERROR_CHECK(i2s_capture_init());
+
+    // I2S 已使能(ESP32 开始出 BCK/LRCK), 等时钟稳定后回读 PCM1865 状态诊断
+    vTaskDelay(pdMS_TO_TICKS(100));
+    pcm1865_dump_status();
+
     net_stream_init();
 
     xTaskCreate(i2s_task, "i2s_task", 4096, NULL, 6, NULL);
