@@ -4,12 +4,12 @@
 // ============================================================================
 
 // ---- WiFi STA ----
-#define WIFI_SSID        "xiaomiliangjin-5G"
+#define WIFI_SSID        "xiaomiliangjin"
 #define WIFI_PASS        "126password"
 #define WIFI_MAX_RETRY   8            // 连续失败次数上限后重置重连
 
 // ---- 目标服务器 (运行 server/recv_server.py 的设备) ----
-#define SERVER_IP        "192.168.1.100"
+#define SERVER_IP        "192.168.31.188"
 #define SERVER_PORT      9000
 
 // ---- 音频参数 ----

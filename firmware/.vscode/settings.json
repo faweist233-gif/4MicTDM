@@ -1,0 +1,18 @@
+{
+  "idf.currentSetup": "C:\\Users\\fawei\\esp\\v5.5\\esp-idf",
+  "idf.portWin": "COM10",
+  "idf.openOcdConfigs": [
+    "board/esp32c3-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "OPENOCD_USB_ADAPTER_LOCATION": "2-5",
+    "IDF_TARGET": "esp32c3"
+  },
+  "clangd.path": "C:\\Users\\fawei\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\Users\\fawei\\Desktop\\4MicTDM\\firmware\\build"
+  ],
+  "idf.flashType": "JTAG"
+}
