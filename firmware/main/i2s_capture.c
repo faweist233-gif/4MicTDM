@@ -4,6 +4,7 @@
 // ============================================================================
 #include "i2s_capture.h"
 #include "config.h"
+#include "freertos/FreeRTOS.h"
 #include "driver/i2s_tdm.h"
 #include "esp_check.h"
 #include "esp_log.h"
