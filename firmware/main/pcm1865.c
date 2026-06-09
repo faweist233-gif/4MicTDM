@@ -76,7 +76,7 @@ esp_err_t pcm1865_init(void)
 
     pcm1865_scan();
 
-    i2c_master_dev_config_t dev_cfg = {
+    i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = PCM1865_I2C_ADDR,
         .scl_speed_hz = I2C_FREQ_HZ,
