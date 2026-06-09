@@ -163,7 +163,12 @@ esp_err_t pcm1865_init(void)
     //    若 ESP32 端读到的通道整体错位, 在此调整 (单位 BCK)。
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_TDM_TX_OFFSET, 0x01), TAG, "tdm_off");
 
-    // 8) 时钟配置 —— 这是"全零静音"的关键
+    // 8a) 先上电 (清 PWRDN/SLEEP/STBY) —— 必须在配 PLL 之前!
+    //     数据手册 Table 19: PLL 在 STANDBY 下是 OFF 的, 若先配 PLL 后上电, 轮询时 PLL 没通电永远锁不上。
+    ESP_RETURN_ON_ERROR(reg_write(PCM186X_POWER_CTRL, 0x00), TAG, "power");
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 8b) 时钟配置 —— 这是"全零静音"的关键
 #if USE_MCLK_OUTPUT
     // Path A: ESP32 送 MCLK 到 SCK 脚 -> 从机 + 自动时钟检测 (CLKDET_EN=1),
     //         系统/ADC/DSP 时钟全部取自 SCK 脚, 自动识别 SCK/fs 比率。最稳。
@@ -176,9 +181,12 @@ esp_err_t pcm1865_init(void)
     // 手动配置时关闭自动时钟检测(CLKDET_EN=0), 否则会覆盖手动系数。
     // 寄存器编码: R 存 R-1; DSP/ADC 分频存 N-1 (同内核驱动 BCK_DIV 惯例); J 直存;
     //            P 编码手册措辞不明 -> P 直存与 P-1 两种都试, 谁锁上用谁。
+    // REF_SEL(0x28 bit1) 极性手册未明示, 两种都试; P 编码两种都试 -> 共 4 组合。
     bool locked = false;
-    for (int attempt = 0; attempt < 2 && !locked; attempt++) {
-        uint8_t p_reg = (attempt == 0) ? 1 : 0;        // 先试 P 直存(=1), 再试 P-1(=0)
+    const uint8_t refsel[2] = { 0x02, 0x00 };          // bit1=1(假设 BCK) / bit1=0(另一极性)
+    for (int r = 0; r < 2 && !locked; r++) {
+      for (int attempt = 0; attempt < 2 && !locked; attempt++) {
+        uint8_t p_reg = (attempt == 0) ? 1 : 0;        // P 直存(=1) / P-1(=0)
         reg_write(PCM186X_PLL_CTRL, 0x00);             // 停 PLL 再配
         reg_write(0x29 /*PLL_P*/,     p_reg);
         reg_write(0x2A /*PLL_R*/,     2 - 1);          // R-1
@@ -189,19 +197,26 @@ esp_err_t pcm1865_init(void)
         reg_write(0x22 /*DSP2_DIV*/,  PLLB_DIV_DSP2 - 1);
         reg_write(0x23 /*ADC_DIV*/,   PLLB_DIV_ADC  - 1);
         reg_write(PCM186X_CLK_CTRL, 0x0E);             // ADC/DSP1/DSP2 源=PLL, CLKDET_EN=0
-        reg_write(PCM186X_PLL_CTRL, 0x03);             // REF_SEL=BCK | EN -> 触发锁定
+        reg_write(PCM186X_PLL_CTRL, refsel[r] | 0x01); // REF_SEL | EN -> 触发锁定
         for (int i = 0; i < 30; i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
             uint8_t s = 0;
             if (reg_read(PCM186X_PLL_CTRL, &s) == ESP_OK && (s & 0x10)) { locked = true; break; }
         }
-        ESP_LOGI(TAG, "PLL 尝试 P_reg=%d -> %s", p_reg, locked ? "锁定" : "未锁");
+        ESP_LOGI(TAG, "PLL 尝试 REF_SEL=%d P_reg=%d -> %s",
+                 !!(refsel[r] & 0x02), p_reg, locked ? "锁定" : "未锁");
+      }
+    }
+    if (!locked) {
+        // 回读系数寄存器, 确认 I2C 写入确实落地 (排除分页/写丢失)
+        uint8_t p=0xFF, rr=0xFF, j=0xFF, d1=0xFF, da=0xFF;
+        reg_read(0x29,&p); reg_read(0x2A,&rr); reg_read(0x2B,&j);
+        reg_read(0x21,&d1); reg_read(0x23,&da);
+        ESP_LOGW(TAG, "回读: PLL_P=0x%02X PLL_R=0x%02X PLL_J=0x%02X DSP1_DIV=0x%02X ADC_DIV=0x%02X",
+                 p, rr, j, d1, da);
     }
     ESP_LOGI(TAG, "PLL 锁定: %s", locked ? "OK" : "失败(查 BCK 是否真到 PCM1865 脚/示波器, 或 J 编码)");
 #endif
-
-    // 9) 上电运行 (清 PWRDN/SLEEP/STBY)
-    ESP_RETURN_ON_ERROR(reg_write(PCM186X_POWER_CTRL, 0x00), TAG, "power");
 
     (void)s_page;
     ESP_LOGI(TAG, "PCM1865 配置完成: TDM 4ch / 16-bit / slave(BCK-PLL) / fs=%d", SAMPLE_RATE);
