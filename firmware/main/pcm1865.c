@@ -7,6 +7,9 @@
 // ============================================================================
 #include "pcm1865.h"
 #include "config.h"
+#include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -150,21 +153,47 @@ esp_err_t pcm1865_init(void)
     //         系统/ADC/DSP 时钟全部取自 SCK 脚, 自动识别 SCK/fs 比率。最稳。
     ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x01 /*CLKDET_EN*/), TAG, "clk_ctrl");
 #else
-    // Path B: 无 MCLK, 须用 PLL 以 BCK 为参考造系统时钟。
-    //   下列为骨架, P/R/J/D 与各分频需按 PCM186x 数据手册 PLL 章节填入并用逻辑分析仪验证,
-    //   否则 PLL 不锁仍是全零。bring-up 时建议先走 Path A。
-    //   参考: REF=BCK=64fs=1.024MHz@16k, 目标 SCK=256fs。
-    //   PLL_CTRL(0x28): bit1 REF_SEL=1 选 BCK 为参考, bit0 EN=1。
-    reg_write(0x28, 0x00);                       // 先关 PLL 再配
-    // reg_write(PCM186X_PLL_P_DIV/*0x29*/, P-1);
-    // reg_write(PCM186X_PLL_R_DIV/*0x2A*/, R);
-    // reg_write(PCM186X_PLL_J_DIV/*0x2B*/, J);
-    // reg_write(0x2C, D_LSB); reg_write(0x2D, D_MSB);
-    // reg_write(0x25 /*PLL_SCK_DIV*/, sck_div-1);
-    // reg_write(0x21 /*DSP1_CLK_DIV*/, ...); reg_write(0x22, ...); reg_write(0x23 /*ADC*/, ...);
-    reg_write(0x28, 0x03);                       // REF_SEL=BCK | EN
-    // CLK_CTRL: SCK_SRC_PLL(bit5) | ADC_SRC_PLL(bit3) | DSP_SRC_PLL(bit2,1) | CLKDET_EN(bit0)
-    ESP_RETURN_ON_ERROR(reg_write(PCM186X_CLK_CTRL, 0x2F), TAG, "clk_ctrl");
+    // Path B: ADC slave PLL 模式 (无 MCLK, BCK=64fs 作 PLL 参考)。
+    // 数据手册 Table 5: 该模式下"标准采样率 PLL 自动配置"; CLKDET_EN(自动时钟检测)负责
+    // 自动算出 PLL 系数与 ADC/DSP 分频。前提: 调用本函数时 ESP32 必须已在输出 BCK/LRCK
+    // (main.c 已保证先启动 I2S)。
+    reg_write(PCM186X_PLL_CTRL, 0x00);                              // 先停 PLL
+    reg_write(PCM186X_PLL_CTRL, 0x02);                              // REF_SEL=BCK (参考选 BCK)
+    // ADC/DSP1/DSP2 时钟源=PLL + 开自动时钟检测 (bit5 仅主机 SCKOUT 用, 从机不设)
+    reg_write(PCM186X_CLK_CTRL, 0x0F);
+    reg_write(PCM186X_PLL_CTRL, 0x03);                              // 时钟已就绪后再 EN, 触发锁定
+
+    // 轮询 PLL LOCK (0x28 bit4)
+    bool locked = false;
+    for (int i = 0; i < 30; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        uint8_t s = 0;
+        if (reg_read(PCM186X_PLL_CTRL, &s) == ESP_OK && (s & 0x10)) { locked = true; break; }
+    }
+
+    if (!locked) {
+        // 自动配置没锁 -> 手动填系数兜底。
+        // 数据手册 Table 10(PCM1865 4ch): 参考=1.024MHz(=64fs@16k) 时 P=1,R=2,J=24,D=0 -> VCO 98.304MHz;
+        // 由 VCO 分频得 fs=16k 各时钟: DSP1=512fs=8.192M(/12), DSP2=256fs=4.096M(/24), ADC=128fs=2.048M(/48)。
+        // 注意: 分频/系数寄存器多按 (N-1) 编码, 数值未经逻辑分析仪复核, 锁不上时按此微调。
+        ESP_LOGW(TAG, "PLL 自动未锁, 改手动系数 (P1R2J24, 仅 fs=16k)");
+        reg_write(PCM186X_PLL_CTRL, 0x00);
+        reg_write(0x29 /*PLL_P*/, 1 - 1);
+        reg_write(0x2A /*PLL_R*/, 2 - 1);
+        reg_write(0x2B /*PLL_J*/, 24);
+        reg_write(0x2C /*PLL_D_LSB*/, 0);
+        reg_write(0x2D /*PLL_D_MSB*/, 0);
+        reg_write(0x21 /*DSP1_DIV*/, 12 - 1);
+        reg_write(0x22 /*DSP2_DIV*/, 24 - 1);
+        reg_write(0x23 /*ADC_DIV*/,  48 - 1);
+        reg_write(PCM186X_PLL_CTRL, 0x02 | 0x01);                   // REF_SEL=BCK | EN
+        for (int i = 0; i < 30; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            uint8_t s = 0;
+            if (reg_read(PCM186X_PLL_CTRL, &s) == ESP_OK && (s & 0x10)) { locked = true; break; }
+        }
+    }
+    ESP_LOGI(TAG, "PLL 锁定: %s", locked ? "OK" : "失败(仍全零, 需查 BCK 是否真在 PCM1865 脚上/示波器)");
 #endif
 
     // 9) 上电运行 (清 PWRDN/SLEEP/STBY)

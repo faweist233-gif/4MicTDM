@@ -66,11 +66,14 @@ void app_main(void)
     }
 
     wifi_sta_connect_blocking();
-    ESP_ERROR_CHECK(pcm1865_init());
-    ESP_ERROR_CHECK(i2s_capture_init());
 
-    // I2S 已使能(ESP32 开始出 BCK/LRCK), 等时钟稳定后回读 PCM1865 状态诊断
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // 顺序关键: 先启动 I2S, 让 ESP32 立即输出 BCK/LRCK;
+    // 再配置 PCM1865 —— 这样 PLL 的自动时钟检测器在配置时已能看到 BCK, 才能锁定。
+    // (反过来先配 PCM1865 会因无 BCK 锁不上 PLL, 之后不自动重锁 -> 全零静音)
+    ESP_ERROR_CHECK(i2s_capture_init());
+    vTaskDelay(pdMS_TO_TICKS(20));      // 等 BCK/LRCK 稳定
+    ESP_ERROR_CHECK(pcm1865_init());    // 内部会等待并轮询 PLL 锁定
+
     pcm1865_dump_status();
 
     net_stream_init();

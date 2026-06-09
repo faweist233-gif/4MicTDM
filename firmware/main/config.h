@@ -27,7 +27,8 @@
 //   USE_MCLK_OUTPUT = 1 (推荐): ESP32 额外输出 256fs MCLK 到 PCM1865 SCK 脚,
 //       需多接 1 根线 (I2S_MCLK_GPIO -> PCM1865 SCK/XI), 配 CLK_CTRL=0x00 自动检测。
 //   USE_MCLK_OUTPUT = 0: 走 BCK-PLL (免线), 但需在 pcm1865.c 手填 PLL 寄存器, 难调。
-#define USE_MCLK_OUTPUT  1
+// 本板 SCK 脚未引出 -> 用 Path B (BCK-PLL, 免线)。若日后能接 SCK 脚再改回 1。
+#define USE_MCLK_OUTPUT  0
 #define I2S_MCLK_GPIO    GPIO_NUM_10  // MCLK 输出 -> PCM1865 SCK/XI (仅 USE_MCLK_OUTPUT=1 时用)
 
 // ---- I2C 引脚 (ESP32-C3 = 主机) ----
