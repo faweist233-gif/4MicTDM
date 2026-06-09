@@ -7,6 +7,7 @@
 // ============================================================================
 #include "pcm1865.h"
 #include "config.h"
+#include "i2s_capture.h"
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -202,8 +203,12 @@ esp_err_t pcm1865_init(void)
     reg_write(0x23 /*ADC*/,  PLLB_DIV_ADC  - 1);
     reg_write(PCM186X_CLK_CTRL, 0x0F);                 // CLKDET_EN=1 + 源=PLL
     reg_write(PCM186X_PLL_CTRL, 0x03);                 // REF_SEL=BCK | EN
-    locked = pll_wait_lock();
-    ESP_LOGI(TAG, "PLL 自动 -> %s", locked ? "锁定" : "未锁");
+    // 关键: 抖动 BCK/LRCK(停>3拍再恢复)触发从机自动重检测, 否则连续时钟下检测器不重配。
+    for (int t = 0; t < 3 && !locked; t++) {
+        i2s_capture_restart();
+        locked = pll_wait_lock();
+        ESP_LOGI(TAG, "PLL 自动+时钟抖动#%d -> %s", t, locked ? "锁定" : "未锁");
+    }
 
     // ---- 尝试 2: 手动, 把 R/P/REF_SEL 编码全组合扫一遍 ----
     // 只有 P/R/D/REF 影响锁定(J=16 已确认, 分频不影响); R 直存 vs R-1 是上次没试的关键变量。
@@ -219,6 +224,7 @@ esp_err_t pcm1865_init(void)
             reg_write(0x29 /*P*/, pvals[pi]);
             reg_write(0x2A /*R*/, rvals[ri]);
             reg_write(PCM186X_PLL_CTRL, refs[fi] | 0x01);
+            i2s_capture_restart();                     // 时钟抖动, 触发离开 Clock Waiting
             locked = pll_wait_lock();
             ESP_LOGI(TAG, "PLL 手动 R=%d P=%d REF=%d -> %s",
                      rvals[ri], pvals[pi], !!(refs[fi] & 0x02), locked ? "锁定" : "未锁");

@@ -5,6 +5,7 @@
 #include "i2s_capture.h"
 #include "config.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/i2s_tdm.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -56,4 +57,14 @@ esp_err_t i2s_capture_init(void)
 esp_err_t i2s_capture_read(void *buf, size_t len, size_t *bytes_read)
 {
     return i2s_channel_read(s_rx, buf, len, bytes_read, portMAX_DELAY);
+}
+
+esp_err_t i2s_capture_restart(void)
+{
+    if (!s_rx) return ESP_ERR_INVALID_STATE;
+    i2s_channel_disable(s_rx);              // BCK/LRCK 停
+    vTaskDelay(pdMS_TO_TICKS(5));           // 停 >3 BCK (3.072MHz 下远够)
+    esp_err_t e = i2s_channel_enable(s_rx); // 恢复 -> PCM1865 检测到"时钟恢复"事件
+    vTaskDelay(pdMS_TO_TICKS(5));
+    return e;
 }
