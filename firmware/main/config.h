@@ -13,7 +13,7 @@
 #define SERVER_PORT      9000
 
 // ---- 音频参数 ----
-#define SAMPLE_RATE      16000        // 8000/16000/32000/48000
+#define SAMPLE_RATE      48000        // Path B(BCK-PLL) 已支持 16000/48000; 改值需配 pcm1865.c PLL 系数表
 #define NUM_CHANNELS     4            // PCM1865 TDM 4 路
 #define BITS_PER_SAMPLE  16           // 固定 16-bit -> BCK = 64*fs (命中 PCM1865 BCK-PLL 工作点)
 
